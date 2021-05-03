@@ -23,10 +23,12 @@ process_tree.zlock_client.set_process_name('runmanager.batch_compiler')
 import os
 import sys
 import traceback
+import time
 from types import ModuleType
 
 import labscript
 from labscript_utils.modulewatcher import ModuleWatcher
+
 
 class BatchProcessor(object):
     def __init__(self, to_parent, from_parent, kill_lock):
@@ -41,18 +43,18 @@ class BatchProcessor(object):
         sys.modules[self.script_module.__name__] = self.script_module
 
         self.mainloop()
-        
+
     def mainloop(self):
         while True:
-            signal, data =  self.from_parent.get()
+            signal, data = self.from_parent.get()
             if signal == 'compile':
                 success = self.compile(*data)
-                self.to_parent.put(['done',success])
+                self.to_parent.put(['done', success])
             elif signal == 'quit':
                 sys.exit(0)
             else:
                 raise ValueError(signal)
-                    
+
     def compile(self, labscript_file, run_file):
         self.script_module.__file__ = labscript_file
 
@@ -68,7 +70,7 @@ class BatchProcessor(object):
                 with open(labscript_file) as f:
                     code = compile(
                         f.read(), self.script_module.__file__, 'exec', dont_inherit=True
-                    )
+                    )  # creates a python code object that can be later executed by exec. The code is basically our exp script
                     exec(code, self.script_module.__dict__)
             return True
         except Exception:
@@ -83,11 +85,12 @@ class BatchProcessor(object):
             # Reset the script module's namespace:
             self.script_module.__dict__.clear()
             self.script_module.__dict__.update(self.script_module_clean_dict)
-                   
+
+
 if __name__ == '__main__':
-    module_watcher = ModuleWatcher() # Make sure modified modules are reloaded
+    module_watcher = ModuleWatcher()  # Make sure modified modules are reloaded
     # Rename this module to '_runmanager_batch_compiler' and put it in sys.modules under
     # that name. The user's script will become the __main__ module:
     __name__ = '_runmanager_batch_compiler'
     sys.modules[__name__] = sys.modules['__main__']
-    batch_processor = BatchProcessor(to_parent,from_parent,kill_lock)
+    batch_processor = BatchProcessor(to_parent, from_parent, kill_lock)
