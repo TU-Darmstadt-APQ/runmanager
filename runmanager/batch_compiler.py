@@ -65,13 +65,16 @@ class BatchProcessor(object):
 
         try:
             # Do not let the modulewatcher unload any modules whilst we're working:
+            # sys.stderr.write('Batch compiler message start: ' + str(int(round(time.time() * 1000))) + 'ms\n')
             with kill_lock, module_watcher.lock:
                 labscript.labscript_init(run_file, labscript_file=labscript_file)
                 with open(labscript_file) as f:
                     code = compile(
                         f.read(), self.script_module.__file__, 'exec', dont_inherit=True
                     )  # creates a python code object that can be later executed by exec. The code is basically our exp script
-                    exec(code, self.script_module.__dict__)
+                    # sys.stderr.write('Batch compiler python code created: ' + str(int(round(time.time() * 1000))) + 'ms\n')
+                    exec(code, self.script_module.__dict__)  # This is done with labscript
+            # sys.stderr.write('Batch compiler message end: ' + str(int(round(time.time() * 1000))) + 'ms\n')
             return True
         except Exception:
             traceback_lines = traceback.format_exception(*sys.exc_info())

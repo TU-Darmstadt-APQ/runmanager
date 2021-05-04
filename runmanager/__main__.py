@@ -1785,8 +1785,9 @@ class RunManager(object):
         self.ui.lineEdit_shot_output_folder.setToolTip(text)
 
     def on_engage_clicked(self):
-        print('Engage clicked', int(round(time.time() * 1000)))
-        self.output_box.output('Engage clicked' +str(int(round(time.time() * 1000))) + 'ms\n')
+        # print('Engage clicked', int(round(time.time() * 1000)))
+        # self.timing_time = round(time.time() * 1000)
+        # self.output_box.output('Engage clicked' +str(int(self.timing_time)) + 'ms\n')
         logger.info('Engage')
         try:
             send_to_BLACS = self.ui.checkBox_run_shots.isChecked()
@@ -3228,11 +3229,12 @@ class RunManager(object):
                             run_file = next(run_files)
                         except StopIteration:
                             self.output_box.output('Ready.\n\n')
-                            self.output_box.output('Directly after ready (compile_loop): ' +str(int(round(time.time() * 1000))) + 'ms\n')
-                            print('Ready printed', int(round(time.time() * 1000)))
+                            # self.output_box.output('Directly after ready (compile_loop): ' +str(int(round(time.time() * 1000)) - self.timing_time) + 'ms\n')
+                            # print('Ready printed', int(round(time.time() * 1000)))
                             break
                         else:
                             self.output_box.output('Start compile loop: ' +str(int(round(time.time() * 1000))) + 'ms\n')
+                            # This starts compilation using the batch_compiler:
                             self.to_child.put(['compile', [labscript_file, run_file]])
                             signal, success = self.from_child.get()  #TODO: Takes almost 5 sec!
                             assert signal == 'done'
