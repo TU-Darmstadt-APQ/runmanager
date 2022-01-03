@@ -1380,8 +1380,8 @@ class RunManager(object):
         self.output_popout_button.setIcon(QtGui.QIcon(':/qtutils/fugue/arrow-out'))
         self.output_popout_button.setToolTip('Toggle whether the output box is in a separate window')
         self.ui.tabWidget.tabBar().setTabButton(output_tab_index, QtWidgets.QTabBar.RightSide, self.output_popout_button)
-        # Fix the first three tabs in place:
-        for index in range(3):
+        # Fix the first four tabs in place:
+        for index in range(4):
             self.ui.tabWidget.tabBar().setMovable(False, index=index)
         # Whether or not the output box is currently popped out:
         self.output_box_is_popped_out = False
@@ -1394,6 +1394,7 @@ class RunManager(object):
         self.setup_config()
         self.setup_axes_tab()
         self.setup_groups_tab()
+        self.setup_subshots_tab()
         self.connect_signals()
 
         # The last location from which a labscript file was selected, defaults
@@ -1583,6 +1584,82 @@ class RunManager(object):
         # flow-on changes made by the method itself:
         self.on_groups_model_active_changed_recursion_depth = 0
 
+
+    def setup_subshots_tab(self):
+        self.sub_shots_model = QtGui.QStandardItemModel()
+        self.sub_shots_model.setHorizontalHeaderLabels(['Sub-Shot name', 'File', 'Remove'])
+        self.ui.treeView_sub_shots.setModel(self.sub_shots_model)
+        self.ui.treeView_groups.setSortingEnabled(True)
+        self.ui.treeView_sub_shots.sortByColumn(0, QtCore.Qt.AscendingOrder)
+
+        # Set column widths:
+        self.ui.treeView_sub_shots.setColumnWidth(0, 200)
+
+        # Ensure the clickable region of the open/close button doesn't extend forever:
+        self.ui.treeView_sub_shots.header().setStretchLastSection(False)
+        # Stretch the filpath/groupname column to fill available space:
+        self.ui.treeView_sub_shots.header().setSectionResizeMode(
+            1, QtWidgets.QHeaderView.Stretch
+        )
+
+        self.ui.treeView_sub_shots.resizeColumnToContents(2)
+
+    def on_create_new_sub_shot_clicked(self):
+
+        name = self.ui.lineEdit_new_sub_shot_name.text()
+        file = self.ui.lineEdit_new_sub_shot_file.text()
+
+        # Add the parent row:
+        sub_shot_name_item = QtGui.QStandardItem(name)
+        sub_shot_name_item.setEditable(False)
+        sub_shot_name_item.setToolTip(name)
+        
+        sub_shot_file_item = QtGui.QStandardItem(file)
+        sub_shot_file_item.setEditable(False)
+        sub_shot_file_item.setToolTip(file)
+
+        file_close_item = QtGui.QStandardItem()
+        file_close_item.setIcon(QtGui.QIcon(':qtutils/fugue/cross'))
+        file_close_item.setEditable(False)
+        file_close_item.setToolTip('Remove sub-shot.')
+
+        self.sub_shots_model.appendRow([sub_shot_name_item, sub_shot_file_item, file_close_item])
+
+
+    def on_select_sub_shot_file_clicked(self):
+        labscript_file = QtWidgets.QFileDialog.getOpenFileName(self.ui,
+                                                           'Select sub shot file',
+                                                           self.last_opened_labscript_folder,
+                                                           "Python files (*.py)")
+        if type(labscript_file) is tuple:
+            labscript_file, _ = labscript_file
+
+        if not labscript_file:
+            # User cancelled selection
+            return
+        # Convert to standard platform specific path, otherwise Qt likes forward slashes:
+        labscript_file = os.path.abspath(labscript_file)
+        if not os.path.isfile(labscript_file):
+            error_dialog("No such file %s." % labscript_file)
+            return
+        # Save the containing folder for use next time we open the dialog box:
+        self.last_opened_labscript_folder = os.path.dirname(labscript_file)
+        # Write the file to the lineEdit:
+        self.ui.lineEdit_new_sub_shot_file.setText(labscript_file)
+
+
+    def on_treeView_sub_shots_leftClicked(self, index):
+        """Here we respond to user clicks on the treeview. 
+        We only detect clicks onto the close button
+          """
+        if qapplication.keyboardModifiers() != QtCore.Qt.NoModifier:
+            # Only handle mouseclicks with no keyboard modifiers.
+            return
+        item = self.sub_shots_model.itemFromIndex(index)
+        
+        if item.column() == 2:
+           self.sub_shots_model.takeRow(item.row())
+
     def connect_signals(self):
         # The button that pops the output box in and out:
         self.output_popout_button.clicked.connect(self.on_output_popout_button_clicked)
@@ -1625,6 +1702,11 @@ class RunManager(object):
         self.axes_model.itemChanged.connect(self.on_axes_item_changed)
         self.axes_model.rowsRemoved.connect(self.update_global_shuffle_state)
         self.axes_model.rowsInserted.connect(self.update_global_shuffle_state)
+
+        # Sub shot creation
+        self.ui.pushButton_new_sub_shot.clicked.connect(self.on_create_new_sub_shot_clicked)
+        self.ui.toolButton_new_sub_shot_open_file.clicked.connect(self.on_select_sub_shot_file_clicked)
+        self.ui.treeView_sub_shots.leftClicked.connect(self.on_treeView_sub_shots_leftClicked)
 
         # Groups tab; right click menu, menu actions, open globals file, new globals file, diff globals file,
         self.ui.treeView_groups.customContextMenuRequested.connect(self.on_treeView_groups_context_menu_requested)
