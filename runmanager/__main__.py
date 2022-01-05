@@ -1879,13 +1879,8 @@ class RunManager(object):
             send_to_runviewer = self.ui.checkBox_view_shots.isChecked()
             labscript_file = self.ui.lineEdit_labscript_file.text()
 
-
-            # TODO: read sub-shots
-            sub_shots = [
-                {"name": "init", "file": "C:\\Users\\marce\\labscript-suite\\userlib\\labscriptlib\\example_apparatus\\example_exp\\example_experiment_init.py"},
-                {"name": "main", "file": "C:\\Users\\marce\\labscript-suite\\userlib\\labscriptlib\\example_apparatus\\example_exp\\example_experiment_main.py"}
-            ]
-            is_composition = True
+            sub_shots = self.get_sub_shots() 
+            is_composition = self.ui.checkBox_composition.isChecked()
 
             # even though we shuffle on a per global basis, if ALL of the globals are set to shuffle, then we may as well shuffle again. This helps shuffle shots more randomly than just shuffling within each level (because without this, you would still do all shots with the outer most variable the same, etc)
             shuffle = self.ui.pushButton_shuffle.checkState() == QtCore.Qt.Checked
@@ -2804,6 +2799,18 @@ class RunManager(object):
                         raise RuntimeError(msg)
                     active_groups[group_name] = globals_file
         return active_groups
+    
+    @inmain_decorator()  # Can be called from a non-main thread
+    def get_sub_shots(self):
+        """Returns sub shots in the format [{name, file}].
+        Displays an error dialog and returns None if multiple sub shots of the
+        same name exist as this is invalid."""
+        sub_shots = []
+        for i in range(self.sub_shots_model.rowCount()):
+            item_name = self.sub_shots_model.item(i, 0).text()
+            item_file = self.sub_shots_model.item(i, 1).text()
+            sub_shots.append({"name": item_name, "file": item_file})
+        return sub_shots
 
     def open_globals_file(self, globals_file):
         # Do nothing if this file is already open:
