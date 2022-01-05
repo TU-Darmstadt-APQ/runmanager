@@ -37,6 +37,9 @@ import pprint
 import traceback
 import signal
 from pathlib import Path
+from shutil import copyfile # TODO: remove! used for quick and dirty test
+import labscript_utils.h5_lock
+import h5py
 
 splash.update_text('importing matplotlib')
 # Evaluation of globals happens in a thread with the pylab module imported.
@@ -1875,6 +1878,15 @@ class RunManager(object):
             send_to_BLACS = self.ui.checkBox_run_shots.isChecked()
             send_to_runviewer = self.ui.checkBox_view_shots.isChecked()
             labscript_file = self.ui.lineEdit_labscript_file.text()
+
+
+            # TODO: read sub-shots
+            sub_shots = [
+                {"name": "init", "file": "C:\\Users\\marce\\labscript-suite\\userlib\\labscriptlib\\example_apparatus\\example_exp\\example_experiment_init.py"},
+                {"name": "main", "file": "C:\\Users\\marce\\labscript-suite\\userlib\\labscriptlib\\example_apparatus\\example_exp\\example_experiment_main.py"}
+            ]
+            is_composition = True
+
             # even though we shuffle on a per global basis, if ALL of the globals are set to shuffle, then we may as well shuffle again. This helps shuffle shots more randomly than just shuffling within each level (because without this, you would still do all shots with the outer most variable the same, etc)
             shuffle = self.ui.pushButton_shuffle.checkState() == QtCore.Qt.Checked
             if not labscript_file:
@@ -1898,10 +1910,11 @@ class RunManager(object):
             except Exception as e:
                 raise Exception('Error parsing globals:\n%s\nCompilation aborted.' % str(e))
             logger.info('Making h5 files')
+            # TODO: run_files to: (main_run_file, sub_run_files)
             labscript_file, run_files = self.make_h5_files(
-                labscript_file, output_folder, sequenceglobals, shots, shuffle)
+                labscript_file, output_folder, sequenceglobals, shots, shuffle, is_composition)
             self.ui.pushButton_abort.setEnabled(True)
-            self.compile_queue.put([labscript_file, run_files, send_to_BLACS, BLACS_host, send_to_runviewer])
+            self.compile_queue.put([labscript_file, run_files, send_to_BLACS, BLACS_host, send_to_runviewer, is_composition, sub_shots])
         except Exception as e:
             self.output_box.output('%s\n\n' % str(e), red=True)
         logger.info('end engage')
@@ -3296,7 +3309,7 @@ class RunManager(object):
     def compile_loop(self):
         while True:
             try:
-                labscript_file, run_files, send_to_BLACS, BLACS_host, send_to_runviewer = self.compile_queue.get()
+                labscript_file, run_files, send_to_BLACS, BLACS_host, send_to_runviewer, is_composition, sub_shots = self.compile_queue.get()
                 run_files = iter(run_files)  # Should already be in iterator but just in case
                 while True:
                     if self.compilation_aborted.is_set():
@@ -3312,13 +3325,49 @@ class RunManager(object):
                             self.output_box.output('Ready.\n\n')
                             break
                         else:
-                            self.to_child.put(['compile', [labscript_file, run_file]])
-                            signal, success = self.from_child.get()
-                            assert signal == 'done'
-                            if not success:
-                                self.compilation_aborted.set()
-                                continue
+
+                            if is_composition:
+                                print("Composition must be treated differently")
+                                # Compile all subshots
+
+                                # TODO: create shot run file correctly!
+                                # quick&dirty fix: copy composition file...
+                                with h5py.File(run_file, "r") as f:
+                                    sub_shot_templates_folder = f.attrs['sub_shot_templates_folder']
+
+                                print(f"Folder: {sub_shot_templates_folder}")
+
+                                for sub_shot in sub_shots:
+                                    print(f"sub_shot: {sub_shot}")
+                                    sub_shot_run_file = f'{sub_shot_templates_folder}/{sub_shot["name"]}.hdf5'
+                                    sub_shot_labscript_file = sub_shot['file']
+                                    copyfile(run_file, sub_shot_run_file)
+                                    self.to_child.put(['compile', [sub_shot_labscript_file, sub_shot_run_file]])
+                                    signal, success = self.from_child.get()
+                                    assert signal == 'done'
+                                    if not success:
+                                        self.compilation_aborted.set()
+                                        continue
+                                    with h5py.File(run_file, 'r+') as f:
+                                        # write reference to sub shot template
+                                        f['shot_templates'][sub_shot['name']] = h5py.ExternalLink(sub_shot_run_file, "/")
+
+                                with h5py.File(run_file, "r+") as f:
+                                    script_text = open(labscript_file).read()
+                                    script = f.create_dataset('script', data=script_text)
+                                    script.attrs['name'] = os.path.basename(labscript_file).encode()
+                                    script.attrs['path'] = os.path.dirname(labscript_file).encode()
+                            else:
+                                # Compile self-contained shot
+                                self.to_child.put(['compile', [labscript_file, run_file]])
+                                signal, success = self.from_child.get()
+                                assert signal == 'done'
+                                if not success:
+                                    self.compilation_aborted.set()
+                                    continue
+
                             if send_to_BLACS:
+                                print("Send to BLACS")
                                 self.send_to_BLACS(run_file, BLACS_host)
                             if send_to_runviewer:
                                 self.send_to_runviewer(run_file)
@@ -3522,7 +3571,7 @@ class RunManager(object):
 
         return expansion_types_changed
 
-    def make_h5_files(self, labscript_file, output_folder, sequence_globals, shots, shuffle):
+    def make_h5_files(self, labscript_file, output_folder, sequence_globals, shots, shuffle, is_composition):
         sequence_attrs, default_output_dir, filename_prefix = runmanager.new_sequence_details(
             labscript_file, config=self.exp_config, increment_sequence_index=True
         )
@@ -3540,6 +3589,7 @@ class RunManager(object):
             sequence_attrs,
             filename_prefix,
             shuffle,
+            is_composition
         )
         logger.debug(run_files)
         return labscript_file, run_files
