@@ -3344,24 +3344,35 @@ class RunManager(object):
                                 # Compile all static subshots
                                 with h5py.File(run_file, "r") as f:
                                     sub_shot_templates_folder = f.attrs['sub_shot_templates_folder']
+                                    sub_shot_scripts_folder = f.attrs['sub_shot_scripts_folder']
+                                    
 
                                 for sub_shot in sub_shots:
-                                    if sub_shot['is_static']:
-                                        sub_shot_run_file = f'{sub_shot_templates_folder}/{sub_shot["name"]}.hdf5'
-                                        sub_shot_labscript_file = sub_shot['file']
-                                        runmanager.make_run_file_from_composition_file(sub_shot_labscript_file, run_file, sub_shot_run_file)
 
+                                    sub_shot_run_file = f'{sub_shot_templates_folder}/{sub_shot["name"]}.hdf5'
+                                    sub_shot_labscript_file = sub_shot['file']
+                                    runmanager.make_run_file_from_composition_file(sub_shot_labscript_file, run_file, sub_shot_run_file, sub_shot['is_static'])
+
+                                    if sub_shot['is_static']:
+                                        # Precompile static sub-shots
                                         self.to_child.put(['compile', [sub_shot_labscript_file, sub_shot_run_file]])
                                         signal, success = self.from_child.get()
                                         assert signal == 'done'
                                         if not success:
                                             self.compilation_aborted.set()
                                             continue
-                                        with h5py.File(run_file, 'r+') as f:
-                                            # write reference to sub shot template
-                                            f['shot_templates'][sub_shot['name']] = h5py.ExternalLink(sub_shot_run_file, '/')
                                     else:
-                                        print("TODO: non-static sub-shot precompilation....")
+                                        # Copy script for dynamic shot
+                                        sub_shot_script_file = f'{sub_shot_scripts_folder}/{os.path.basename(sub_shot["file"])}'
+                                        copyfile(sub_shot["file"], sub_shot_script_file)
+                                        # Link script for dynamic shot
+                                        with h5py.File(sub_shot_run_file, 'r+') as f:
+                                            # write reference to sub shot template
+                                            f.attrs['dynamic_script'] = sub_shot_script_file
+                                    
+                                    with h5py.File(run_file, 'r+') as f:
+                                        # write reference to sub shot template
+                                        f['shot_templates'][sub_shot['name']] = h5py.ExternalLink(sub_shot_run_file, '/')
 
                                 with h5py.File(run_file, "r+") as f:
                                     script_text = open(labscript_file).read()
@@ -3756,10 +3767,6 @@ class RemoteServer(ZMQServer):
         app.on_abort_clicked()
 
     @inmain_decorator()
-    def handle_compile_single(self, h5_path):
-        print(f"Compile file {h5_path}")
-
-    @inmain_decorator()
     def handle_get_run_shots(self):
         return app.ui.checkBox_run_shots.isChecked()
 
@@ -3835,7 +3842,6 @@ class RemoteServer(ZMQServer):
         elif cmd == '__version__':
             return runmanager.__version__
         try:
-            print(args, kwargs, cmd)
             return getattr(self, 'handle_' + cmd)(*args, **kwargs)
         except Exception as e:
             msg = traceback.format_exc()

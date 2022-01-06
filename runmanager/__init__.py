@@ -747,17 +747,19 @@ def make_run_files(
         runfilename = ('%s_%0' + str(ndigits) + 'd.h5') % (basename, i)
         sub_shot_templates_folder = f"{basename}_sub_shot_templates_{i}"
         sub_shot_runs_folder = f"{basename}_sub_shot_runs_{i}"
+        sub_shot_scripts_folder = f"{basename}_sub_shot_scripts" # scripts can all go into one folder, as they do not change within a sequence
         if is_composition:
             # Only create required folders if it is a composition. Otherwise this pollutes the filesystem
             os.makedirs(sub_shot_templates_folder, exist_ok=True)
             os.makedirs(sub_shot_runs_folder, exist_ok=True)
+            os.makedirs(sub_shot_scripts_folder, exist_ok=True)
         make_single_run_file(
-            runfilename, sequence_globals, shot_globals, sequence_attrs, i, nruns, sub_shot_templates_folder, sub_shot_runs_folder, is_composition
+            runfilename, sequence_globals, shot_globals, sequence_attrs, i, nruns, sub_shot_templates_folder, sub_shot_runs_folder, sub_shot_scripts_folder, is_composition
         )
         yield runfilename
 
 
-def make_single_run_file(filename, sequenceglobals, runglobals, sequence_attrs, run_no, n_runs, sub_shot_templates_folder, sub_shot_runs_folder, is_composition=False):
+def make_single_run_file(filename, sequenceglobals, runglobals, sequence_attrs, run_no, n_runs, sub_shot_templates_folder, sub_shot_runs_folder, sub_shot_scripts_folder, is_composition=False, is_static=True):
     """Does what it says. runglobals is a dict of this run's globals, the format being
     the same as that of one element of the list returned by expand_globals.
     sequence_globals is a nested dictionary of the type returned by get_globals.
@@ -773,6 +775,9 @@ def make_single_run_file(filename, sequenceglobals, runglobals, sequence_attrs, 
         f.attrs['is_composition'] = is_composition
         f.attrs['sub_shot_templates_folder'] = sub_shot_templates_folder
         f.attrs['sub_shot_runs_folder'] = sub_shot_runs_folder
+        f.attrs['sub_shot_scripts_folder'] = sub_shot_scripts_folder
+        if not is_composition:
+            f.attrs['is_static'] = is_static
         f.create_group('shot_templates')
         f.create_group('shots')
         f.create_group('globals')
@@ -820,7 +825,7 @@ def make_run_file_from_globals_files(labscript_file, globals_files, output_path,
     make_single_run_file(output_path, sequence_globals, shots[0], sequence_attrs, 1, 1)
 
 
-def make_run_file_from_composition_file(labscript_file, composition_file, output_path):
+def make_run_file_from_composition_file(labscript_file, composition_file, output_path, is_static = True):
     """Creates a run file output_path, using the composition file as a template."""
     script_basename = os.path.splitext(os.path.basename(labscript_file))[0]
     with h5py.File(composition_file, 'r') as composition:
@@ -831,6 +836,8 @@ def make_run_file_from_composition_file(labscript_file, composition_file, output
             f.attrs['is_composition'] = False
             f.attrs['sub_shot_templates_folder'] = composition.attrs['sub_shot_templates_folder']
             f.attrs['sub_shot_runs_folder'] = composition.attrs['sub_shot_runs_folder']
+            f.attrs['sub_shot_scripts_folder'] = composition.attrs['sub_shot_scripts_folder']
+            f.attrs['is_static'] = is_static
 
             f.create_group('globals')
             f.copy(composition['globals'], f['globals'])
@@ -842,6 +849,22 @@ def compile_labscript(labscript_file, run_file):
     proc = subprocess.Popen([sys.executable, labscript_file, run_file], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     stdout, stderr = proc.communicate()
     return proc.returncode, stdout, stderr
+
+
+def compile_labscript_blocking(labscript_file, run_file):
+    """Compiles labscript_file with the run file, returning
+    the return signal and data."""
+
+    compiler_path = os.path.join(os.path.dirname(__file__), 'batch_compiler.py')
+    to_child, from_child, child = process_tree.subprocess(compiler_path)
+    to_child.put(['compile', [labscript_file, run_file]])
+
+    signal, data = from_child.get()
+    if signal == 'done':
+        to_child.put(['quit', None])
+        child.communicate()
+        
+    return signal, data
 
 
 def compile_labscript_with_globals_files(labscript_file, globals_files, output_path):
