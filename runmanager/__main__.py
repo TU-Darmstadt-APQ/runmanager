@@ -1905,7 +1905,6 @@ class RunManager(object):
             except Exception as e:
                 raise Exception('Error parsing globals:\n%s\nCompilation aborted.' % str(e))
             logger.info('Making h5 files')
-            # TODO: run_files to: (main_run_file, sub_run_files)
             labscript_file, run_files = self.make_h5_files(
                 labscript_file, output_folder, sequenceglobals, shots, shuffle, is_composition)
             self.ui.pushButton_abort.setEnabled(True)
@@ -2809,7 +2808,8 @@ class RunManager(object):
         for i in range(self.sub_shots_model.rowCount()):
             item_name = self.sub_shots_model.item(i, 0).text()
             item_file = self.sub_shots_model.item(i, 1).text()
-            sub_shots.append({"name": item_name, "file": item_file})
+            is_static = True
+            sub_shots.append({"name": item_name, "file": item_file, "is_static": is_static})
         return sub_shots
 
     def open_globals_file(self, globals_file):
@@ -3334,30 +3334,27 @@ class RunManager(object):
                         else:
 
                             if is_composition:
-                                print("Composition must be treated differently")
-                                # Compile all subshots
-
-                                # TODO: create shot run file correctly!
-                                # quick&dirty fix: copy composition file...
+                                # Compile all static subshots
                                 with h5py.File(run_file, "r") as f:
                                     sub_shot_templates_folder = f.attrs['sub_shot_templates_folder']
 
-                                print(f"Folder: {sub_shot_templates_folder}")
-
                                 for sub_shot in sub_shots:
-                                    print(f"sub_shot: {sub_shot}")
-                                    sub_shot_run_file = f'{sub_shot_templates_folder}/{sub_shot["name"]}.hdf5'
-                                    sub_shot_labscript_file = sub_shot['file']
-                                    copyfile(run_file, sub_shot_run_file)
-                                    self.to_child.put(['compile', [sub_shot_labscript_file, sub_shot_run_file]])
-                                    signal, success = self.from_child.get()
-                                    assert signal == 'done'
-                                    if not success:
-                                        self.compilation_aborted.set()
-                                        continue
-                                    with h5py.File(run_file, 'r+') as f:
-                                        # write reference to sub shot template
-                                        f['shot_templates'][sub_shot['name']] = h5py.ExternalLink(sub_shot_run_file, "/")
+                                    if sub_shot['is_static']:
+                                        sub_shot_run_file = f'{sub_shot_templates_folder}/{sub_shot["name"]}.hdf5'
+                                        sub_shot_labscript_file = sub_shot['file']
+                                        runmanager.make_run_file_from_composition_file(sub_shot_labscript_file, run_file, sub_shot_run_file)
+
+                                        self.to_child.put(['compile', [sub_shot_labscript_file, sub_shot_run_file]])
+                                        signal, success = self.from_child.get()
+                                        assert signal == 'done'
+                                        if not success:
+                                            self.compilation_aborted.set()
+                                            continue
+                                        with h5py.File(run_file, 'r+') as f:
+                                            # write reference to sub shot template
+                                            f['shot_templates'][sub_shot['name']] = h5py.ExternalLink(sub_shot_run_file, '/')
+                                    else:
+                                        print("TODO: non-static sub-shot precompilation....")
 
                                 with h5py.File(run_file, "r+") as f:
                                     script_text = open(labscript_file).read()
@@ -3752,6 +3749,10 @@ class RemoteServer(ZMQServer):
         app.on_abort_clicked()
 
     @inmain_decorator()
+    def handle_compile_single(self, h5_path):
+        print(f"Compile file {h5_path}")
+
+    @inmain_decorator()
     def handle_get_run_shots(self):
         return app.ui.checkBox_run_shots.isChecked()
 
@@ -3827,6 +3828,7 @@ class RemoteServer(ZMQServer):
         elif cmd == '__version__':
             return runmanager.__version__
         try:
+            print(args, kwargs, cmd)
             return getattr(self, 'handle_' + cmd)(*args, **kwargs)
         except Exception as e:
             msg = traceback.format_exc()

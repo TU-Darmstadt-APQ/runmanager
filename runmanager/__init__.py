@@ -820,6 +820,22 @@ def make_run_file_from_globals_files(labscript_file, globals_files, output_path,
     make_single_run_file(output_path, sequence_globals, shots[0], sequence_attrs, 1, 1)
 
 
+def make_run_file_from_composition_file(labscript_file, composition_file, output_path):
+    """Creates a run file output_path, using the composition file as a template."""
+    script_basename = os.path.splitext(os.path.basename(labscript_file))[0]
+    with h5py.File(composition_file, 'r') as composition:
+        with h5py.File(output_path, 'w') as f:
+            f.attrs['script_basename'] = script_basename
+            f.attrs['run number'] = composition.attrs['run number']
+            f.attrs['n_runs'] = composition.attrs['n_runs']
+            f.attrs['is_composition'] = False
+            f.attrs['sub_shot_templates_folder'] = composition.attrs['sub_shot_templates_folder']
+            f.attrs['sub_shot_runs_folder'] = composition.attrs['sub_shot_runs_folder']
+
+            f.create_group('globals')
+            f.copy(composition['globals'], f['globals'])
+
+
 def compile_labscript(labscript_file, run_file):
     """Compiles labscript_file with the run file, returning
     the processes return code, stdout and stderr."""
