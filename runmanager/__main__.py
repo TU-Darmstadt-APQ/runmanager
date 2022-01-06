@@ -1590,7 +1590,7 @@ class RunManager(object):
 
     def setup_subshots_tab(self):
         self.sub_shots_model = QtGui.QStandardItemModel()
-        self.sub_shots_model.setHorizontalHeaderLabels(['Sub-Shot name', 'File', 'Remove'])
+        self.sub_shots_model.setHorizontalHeaderLabels(['Sub-Shot name', 'File', 'Static', 'Remove'])
         self.ui.treeView_sub_shots.setModel(self.sub_shots_model)
         self.ui.treeView_groups.setSortingEnabled(True)
         self.ui.treeView_sub_shots.sortByColumn(0, QtCore.Qt.AscendingOrder)
@@ -1606,6 +1606,7 @@ class RunManager(object):
         )
 
         self.ui.treeView_sub_shots.resizeColumnToContents(2)
+        self.ui.treeView_sub_shots.resizeColumnToContents(3)
 
     def on_create_new_sub_shot_clicked(self):
 
@@ -1620,13 +1621,17 @@ class RunManager(object):
         sub_shot_file_item = QtGui.QStandardItem(file)
         sub_shot_file_item.setEditable(False)
         sub_shot_file_item.setToolTip(file)
+        
+        sub_shot_static_item = QtGui.QStandardItem()
+        sub_shot_static_item.setCheckable(True)
+        sub_shot_static_item.setCheckState(QtCore.Qt.Checked)
 
         file_close_item = QtGui.QStandardItem()
         file_close_item.setIcon(QtGui.QIcon(':qtutils/fugue/cross'))
         file_close_item.setEditable(False)
         file_close_item.setToolTip('Remove sub-shot.')
 
-        self.sub_shots_model.appendRow([sub_shot_name_item, sub_shot_file_item, file_close_item])
+        self.sub_shots_model.appendRow([sub_shot_name_item, sub_shot_file_item, sub_shot_static_item, file_close_item])
 
 
     def on_select_sub_shot_file_clicked(self):
@@ -1660,7 +1665,7 @@ class RunManager(object):
             return
         item = self.sub_shots_model.itemFromIndex(index)
         
-        if item.column() == 2:
+        if item.column() == 3:
            self.sub_shots_model.takeRow(item.row())
 
     def connect_signals(self):
@@ -2808,7 +2813,9 @@ class RunManager(object):
         for i in range(self.sub_shots_model.rowCount()):
             item_name = self.sub_shots_model.item(i, 0).text()
             item_file = self.sub_shots_model.item(i, 1).text()
-            is_static = True
+            is_static_state = self.sub_shots_model.item(i, 2).checkState()
+            is_static = is_static_state == QtCore.Qt.Checked
+
             sub_shots.append({"name": item_name, "file": item_file, "is_static": is_static})
         return sub_shots
 
