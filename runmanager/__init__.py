@@ -759,7 +759,7 @@ def make_run_files(
         yield runfilename
 
 
-def make_single_run_file(filename, sequenceglobals, runglobals, sequence_attrs, run_no, n_runs, sub_shot_templates_folder, sub_shot_runs_folder, sub_shot_scripts_folder, is_composition=False, is_static=True):
+def make_single_run_file(filename, sequenceglobals, runglobals, sequence_attrs, run_no, n_runs, sub_shot_templates_folder = None, sub_shot_runs_folder = None, sub_shot_scripts_folder = None, is_composition=False, is_static=True):
     """Does what it says. runglobals is a dict of this run's globals, the format being
     the same as that of one element of the list returned by expand_globals.
     sequence_globals is a nested dictionary of the type returned by get_globals.
@@ -767,6 +767,17 @@ def make_single_run_file(filename, sequenceglobals, runglobals, sequence_attrs, 
     new_sequence_details. run_no and n_runs must be provided, if this run file is part
     of a sequence, then they should reflect how many run files are being generated in
     this sequence, all of which must have identical sequence_attrs."""
+
+    if sub_shot_templates_folder is None:
+        sub_shot_templates_folder = os.path.dirname(os.path.realpath(filename)) + '/sub_shot_templates'
+        
+    if sub_shot_runs_folder is None:
+        sub_shot_runs_folder = os.path.dirname(os.path.realpath(filename)) + '/sub_shot_runs'
+        
+    if sub_shot_scripts_folder is None:
+        sub_shot_scripts_folder = os.path.dirname(os.path.realpath(filename)) + '/sub_shot_scripts'
+
+
     os.makedirs(os.path.dirname(filename), exist_ok=True)
     with h5py.File(filename, 'w') as f:
         f.attrs.update(sequence_attrs)
