@@ -25,6 +25,7 @@ import errno
 import json
 import tokenize
 import io
+from pathlib import Path
 
 import labscript_utils.h5_lock
 import h5py
@@ -851,20 +852,8 @@ def compile_labscript(labscript_file, run_file):
     return proc.returncode, stdout, stderr
 
 
-def compile_labscript_blocking(labscript_file, run_file):
-    """Compiles labscript_file with the run file, returning
-    the return signal and data."""
-
-    compiler_path = os.path.join(os.path.dirname(__file__), 'batch_compiler.py')
-    to_child, from_child, child = process_tree.subprocess(compiler_path)
-    to_child.put(['compile', [labscript_file, run_file]])
-
-    signal, data = from_child.get()
-    if signal == 'done':
-        to_child.put(['quit', None])
-        child.communicate()
-        
-    return signal, data
+def get_runmanager_dir():
+    return Path(__file__).absolute().parent
 
 
 def compile_labscript_with_globals_files(labscript_file, globals_files, output_path):
