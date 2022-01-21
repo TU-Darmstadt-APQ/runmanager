@@ -37,6 +37,9 @@ import pprint
 import traceback
 import signal
 from pathlib import Path
+from shutil import copyfile # TODO: remove! used for quick and dirty test
+import labscript_utils.h5_lock
+import h5py
 
 splash.update_text('importing matplotlib')
 # Evaluation of globals happens in a thread with the pylab module imported.
@@ -1380,8 +1383,8 @@ class RunManager(object):
         self.output_popout_button.setIcon(QtGui.QIcon(':/qtutils/fugue/arrow-out'))
         self.output_popout_button.setToolTip('Toggle whether the output box is in a separate window')
         self.ui.tabWidget.tabBar().setTabButton(output_tab_index, QtWidgets.QTabBar.RightSide, self.output_popout_button)
-        # Fix the first three tabs in place:
-        for index in range(3):
+        # Fix the first four tabs in place:
+        for index in range(4):
             self.ui.tabWidget.tabBar().setMovable(False, index=index)
         # Whether or not the output box is currently popped out:
         self.output_box_is_popped_out = False
@@ -1394,6 +1397,7 @@ class RunManager(object):
         self.setup_config()
         self.setup_axes_tab()
         self.setup_groups_tab()
+        self.setup_subshots_tab()
         self.connect_signals()
 
         # The last location from which a labscript file was selected, defaults
@@ -1583,6 +1587,87 @@ class RunManager(object):
         # flow-on changes made by the method itself:
         self.on_groups_model_active_changed_recursion_depth = 0
 
+
+    def setup_subshots_tab(self):
+        self.sub_shots_model = QtGui.QStandardItemModel()
+        self.sub_shots_model.setHorizontalHeaderLabels(['Sub-Shot name', 'File', 'Static', 'Remove'])
+        self.ui.treeView_sub_shots.setModel(self.sub_shots_model)
+        self.ui.treeView_groups.setSortingEnabled(True)
+        self.ui.treeView_sub_shots.sortByColumn(0, QtCore.Qt.AscendingOrder)
+
+        # Set column widths:
+        self.ui.treeView_sub_shots.setColumnWidth(0, 200)
+
+        # Ensure the clickable region of the open/close button doesn't extend forever:
+        self.ui.treeView_sub_shots.header().setStretchLastSection(False)
+        # Stretch the filpath/groupname column to fill available space:
+        self.ui.treeView_sub_shots.header().setSectionResizeMode(
+            1, QtWidgets.QHeaderView.Stretch
+        )
+
+        self.ui.treeView_sub_shots.resizeColumnToContents(2)
+        self.ui.treeView_sub_shots.resizeColumnToContents(3)
+
+    def on_create_new_sub_shot_clicked(self):
+
+        name = self.ui.lineEdit_new_sub_shot_name.text()
+        file = self.ui.lineEdit_new_sub_shot_file.text()
+
+        # Add the parent row:
+        sub_shot_name_item = QtGui.QStandardItem(name)
+        sub_shot_name_item.setEditable(False)
+        sub_shot_name_item.setToolTip(name)
+        
+        sub_shot_file_item = QtGui.QStandardItem(file)
+        sub_shot_file_item.setEditable(False)
+        sub_shot_file_item.setToolTip(file)
+        
+        sub_shot_static_item = QtGui.QStandardItem()
+        sub_shot_static_item.setCheckable(True)
+        sub_shot_static_item.setCheckState(QtCore.Qt.Checked)
+
+        file_close_item = QtGui.QStandardItem()
+        file_close_item.setIcon(QtGui.QIcon(':qtutils/fugue/cross'))
+        file_close_item.setEditable(False)
+        file_close_item.setToolTip('Remove sub-shot.')
+
+        self.sub_shots_model.appendRow([sub_shot_name_item, sub_shot_file_item, sub_shot_static_item, file_close_item])
+
+
+    def on_select_sub_shot_file_clicked(self):
+        labscript_file = QtWidgets.QFileDialog.getOpenFileName(self.ui,
+                                                           'Select sub shot file',
+                                                           self.last_opened_labscript_folder,
+                                                           "Python files (*.py)")
+        if type(labscript_file) is tuple:
+            labscript_file, _ = labscript_file
+
+        if not labscript_file:
+            # User cancelled selection
+            return
+        # Convert to standard platform specific path, otherwise Qt likes forward slashes:
+        labscript_file = os.path.abspath(labscript_file)
+        if not os.path.isfile(labscript_file):
+            error_dialog("No such file %s." % labscript_file)
+            return
+        # Save the containing folder for use next time we open the dialog box:
+        self.last_opened_labscript_folder = os.path.dirname(labscript_file)
+        # Write the file to the lineEdit:
+        self.ui.lineEdit_new_sub_shot_file.setText(labscript_file)
+
+
+    def on_treeView_sub_shots_leftClicked(self, index):
+        """Here we respond to user clicks on the treeview. 
+        We only detect clicks onto the close button
+          """
+        if qapplication.keyboardModifiers() != QtCore.Qt.NoModifier:
+            # Only handle mouseclicks with no keyboard modifiers.
+            return
+        item = self.sub_shots_model.itemFromIndex(index)
+        
+        if item.column() == 3:
+           self.sub_shots_model.takeRow(item.row())
+
     def connect_signals(self):
         # The button that pops the output box in and out:
         self.output_popout_button.clicked.connect(self.on_output_popout_button_clicked)
@@ -1625,6 +1710,11 @@ class RunManager(object):
         self.axes_model.itemChanged.connect(self.on_axes_item_changed)
         self.axes_model.rowsRemoved.connect(self.update_global_shuffle_state)
         self.axes_model.rowsInserted.connect(self.update_global_shuffle_state)
+
+        # Sub shot creation
+        self.ui.pushButton_new_sub_shot.clicked.connect(self.on_create_new_sub_shot_clicked)
+        self.ui.toolButton_new_sub_shot_open_file.clicked.connect(self.on_select_sub_shot_file_clicked)
+        self.ui.treeView_sub_shots.leftClicked.connect(self.on_treeView_sub_shots_leftClicked)
 
         # Groups tab; right click menu, menu actions, open globals file, new globals file, diff globals file,
         self.ui.treeView_groups.customContextMenuRequested.connect(self.on_treeView_groups_context_menu_requested)
@@ -1793,6 +1883,10 @@ class RunManager(object):
             send_to_BLACS = self.ui.checkBox_run_shots.isChecked()
             send_to_runviewer = self.ui.checkBox_view_shots.isChecked()
             labscript_file = self.ui.lineEdit_labscript_file.text()
+
+            sub_shots = self.get_sub_shots() 
+            is_composition = self.ui.checkBox_composition.isChecked()
+
             # even though we shuffle on a per global basis, if ALL of the globals are set to shuffle, then we may as well shuffle again. This helps shuffle shots more randomly than just shuffling within each level (because without this, you would still do all shots with the outer most variable the same, etc)
             shuffle = self.ui.pushButton_shuffle.checkState() == QtCore.Qt.Checked
             if not labscript_file:
@@ -1817,9 +1911,9 @@ class RunManager(object):
                 raise Exception('Error parsing globals:\n%s\nCompilation aborted.' % str(e))
             logger.info('Making h5 files')
             labscript_file, run_files = self.make_h5_files(
-                labscript_file, output_folder, sequenceglobals, shots, shuffle)
+                labscript_file, output_folder, sequenceglobals, shots, shuffle, is_composition)
             self.ui.pushButton_abort.setEnabled(True)
-            self.compile_queue.put([labscript_file, run_files, send_to_BLACS, BLACS_host, send_to_runviewer])
+            self.compile_queue.put([labscript_file, run_files, send_to_BLACS, BLACS_host, send_to_runviewer, is_composition, sub_shots])
         except Exception as e:
             self.output_box.output('%s\n\n' % str(e), red=True)
         logger.info('end engage')
@@ -2709,6 +2803,21 @@ class RunManager(object):
                         raise RuntimeError(msg)
                     active_groups[group_name] = globals_file
         return active_groups
+    
+    @inmain_decorator()  # Can be called from a non-main thread
+    def get_sub_shots(self):
+        """Returns sub shots in the format [{name, file}].
+        Displays an error dialog and returns None if multiple sub shots of the
+        same name exist as this is invalid."""
+        sub_shots = []
+        for i in range(self.sub_shots_model.rowCount()):
+            item_name = self.sub_shots_model.item(i, 0).text()
+            item_file = self.sub_shots_model.item(i, 1).text()
+            is_static_state = self.sub_shots_model.item(i, 2).checkState()
+            is_static = is_static_state == QtCore.Qt.Checked
+
+            sub_shots.append({"name": item_name, "file": item_file, "is_static": is_static})
+        return sub_shots
 
     def open_globals_file(self, globals_file):
         # Do nothing if this file is already open:
@@ -3214,7 +3323,7 @@ class RunManager(object):
     def compile_loop(self):
         while True:
             try:
-                labscript_file, run_files, send_to_BLACS, BLACS_host, send_to_runviewer = self.compile_queue.get()
+                labscript_file, run_files, send_to_BLACS, BLACS_host, send_to_runviewer, is_composition, sub_shots = self.compile_queue.get()
                 run_files = iter(run_files)  # Should already be in iterator but just in case
                 while True:
                     if self.compilation_aborted.is_set():
@@ -3230,13 +3339,57 @@ class RunManager(object):
                             self.output_box.output('Ready.\n\n')
                             break
                         else:
-                            self.to_child.put(['compile', [labscript_file, run_file]])
-                            signal, success = self.from_child.get()
-                            assert signal == 'done'
-                            if not success:
-                                self.compilation_aborted.set()
-                                continue
+
+                            if is_composition:
+                                # Compile all static subshots
+                                with h5py.File(run_file, "r") as f:
+                                    sub_shot_templates_folder = f.attrs['sub_shot_templates_folder']
+                                    sub_shot_scripts_folder = f.attrs['sub_shot_scripts_folder']
+                                    
+
+                                for sub_shot in sub_shots:
+
+                                    sub_shot_run_file = f'{sub_shot_templates_folder}/{sub_shot["name"]}.hdf5'
+                                    sub_shot_labscript_file = sub_shot['file']
+                                    runmanager.make_run_file_from_composition_file(sub_shot_labscript_file, run_file, sub_shot_run_file, sub_shot['is_static'])
+
+                                    if sub_shot['is_static']:
+                                        # Precompile static sub-shots
+                                        self.to_child.put(['compile', [sub_shot_labscript_file, sub_shot_run_file]])
+                                        signal, success = self.from_child.get()
+                                        assert signal == 'done'
+                                        if not success:
+                                            self.compilation_aborted.set()
+                                            continue
+                                    else:
+                                        # Copy script for dynamic shot
+                                        sub_shot_script_file = f'{sub_shot_scripts_folder}/{os.path.basename(sub_shot["file"])}'
+                                        copyfile(sub_shot["file"], sub_shot_script_file)
+                                        # Link script for dynamic shot
+                                        with h5py.File(sub_shot_run_file, 'r+') as f:
+                                            # write reference to sub shot template
+                                            f.attrs['dynamic_script'] = sub_shot_script_file
+                                    
+                                    with h5py.File(run_file, 'r+') as f:
+                                        # write reference to sub shot template
+                                        f['shot_templates'][sub_shot['name']] = h5py.ExternalLink(sub_shot_run_file, '/')
+
+                                with h5py.File(run_file, "r+") as f:
+                                    script_text = open(labscript_file).read()
+                                    script = f.create_dataset('script', data=script_text)
+                                    script.attrs['name'] = os.path.basename(labscript_file).encode()
+                                    script.attrs['path'] = os.path.dirname(labscript_file).encode()
+                            else:
+                                # Compile self-contained shot
+                                self.to_child.put(['compile', [labscript_file, run_file]])
+                                signal, success = self.from_child.get()
+                                assert signal == 'done'
+                                if not success:
+                                    self.compilation_aborted.set()
+                                    continue
+
                             if send_to_BLACS:
+                                print("Send to BLACS")
                                 self.send_to_BLACS(run_file, BLACS_host)
                             if send_to_runviewer:
                                 self.send_to_runviewer(run_file)
@@ -3440,7 +3593,7 @@ class RunManager(object):
 
         return expansion_types_changed
 
-    def make_h5_files(self, labscript_file, output_folder, sequence_globals, shots, shuffle):
+    def make_h5_files(self, labscript_file, output_folder, sequence_globals, shots, shuffle, is_composition):
         sequence_attrs, default_output_dir, filename_prefix = runmanager.new_sequence_details(
             labscript_file, config=self.exp_config, increment_sequence_index=True
         )
@@ -3458,6 +3611,7 @@ class RunManager(object):
             sequence_attrs,
             filename_prefix,
             shuffle,
+            is_composition
         )
         logger.debug(run_files)
         return labscript_file, run_files

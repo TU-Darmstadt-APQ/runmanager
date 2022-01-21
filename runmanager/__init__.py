@@ -25,6 +25,7 @@ import errno
 import json
 import tokenize
 import io
+from pathlib import Path
 
 import labscript_utils.h5_lock
 import h5py
@@ -718,6 +719,7 @@ def make_run_files(
     sequence_attrs,
     filename_prefix,
     shuffle=False,
+    is_composition=False
 ):
     """Does what it says. sequence_globals and shots are of the datatypes returned by
     get_globals and get_shots, one is a nested dictionary with string values, and the
@@ -744,13 +746,21 @@ def make_run_files(
         random.shuffle(shots)
     for i, shot_globals in enumerate(shots):
         runfilename = ('%s_%0' + str(ndigits) + 'd.h5') % (basename, i)
+        sub_shot_templates_folder = f"{basename}_sub_shot_templates_{i}"
+        sub_shot_runs_folder = f"{basename}_sub_shot_runs_{i}"
+        sub_shot_scripts_folder = f"{basename}_sub_shot_scripts" # scripts can all go into one folder, as they do not change within a sequence
+        if is_composition:
+            # Only create required folders if it is a composition. Otherwise this pollutes the filesystem
+            os.makedirs(sub_shot_templates_folder, exist_ok=True)
+            os.makedirs(sub_shot_runs_folder, exist_ok=True)
+            os.makedirs(sub_shot_scripts_folder, exist_ok=True)
         make_single_run_file(
-            runfilename, sequence_globals, shot_globals, sequence_attrs, i, nruns
+            runfilename, sequence_globals, shot_globals, sequence_attrs, i, nruns, sub_shot_templates_folder, sub_shot_runs_folder, sub_shot_scripts_folder, is_composition
         )
         yield runfilename
 
 
-def make_single_run_file(filename, sequenceglobals, runglobals, sequence_attrs, run_no, n_runs):
+def make_single_run_file(filename, sequenceglobals, runglobals, sequence_attrs, run_no, n_runs, sub_shot_templates_folder = None, sub_shot_runs_folder = None, sub_shot_scripts_folder = None, is_composition=False, is_static=True):
     """Does what it says. runglobals is a dict of this run's globals, the format being
     the same as that of one element of the list returned by expand_globals.
     sequence_globals is a nested dictionary of the type returned by get_globals.
@@ -758,11 +768,30 @@ def make_single_run_file(filename, sequenceglobals, runglobals, sequence_attrs, 
     new_sequence_details. run_no and n_runs must be provided, if this run file is part
     of a sequence, then they should reflect how many run files are being generated in
     this sequence, all of which must have identical sequence_attrs."""
+
+    if sub_shot_templates_folder is None:
+        sub_shot_templates_folder = os.path.dirname(os.path.realpath(filename)) + '/sub_shot_templates'
+        
+    if sub_shot_runs_folder is None:
+        sub_shot_runs_folder = os.path.dirname(os.path.realpath(filename)) + '/sub_shot_runs'
+        
+    if sub_shot_scripts_folder is None:
+        sub_shot_scripts_folder = os.path.dirname(os.path.realpath(filename)) + '/sub_shot_scripts'
+
+
     os.makedirs(os.path.dirname(filename), exist_ok=True)
     with h5py.File(filename, 'w') as f:
         f.attrs.update(sequence_attrs)
         f.attrs['run number'] = run_no
         f.attrs['n_runs'] = n_runs
+        f.attrs['is_composition'] = is_composition
+        f.attrs['sub_shot_templates_folder'] = sub_shot_templates_folder
+        f.attrs['sub_shot_runs_folder'] = sub_shot_runs_folder
+        f.attrs['sub_shot_scripts_folder'] = sub_shot_scripts_folder
+        if not is_composition:
+            f.attrs['is_static'] = is_static
+        f.create_group('shot_templates')
+        f.create_group('shots')
         f.create_group('globals')
         if sequenceglobals is not None:
             for groupname, groupvars in sequenceglobals.items():
@@ -808,12 +837,34 @@ def make_run_file_from_globals_files(labscript_file, globals_files, output_path,
     make_single_run_file(output_path, sequence_globals, shots[0], sequence_attrs, 1, 1)
 
 
+def make_run_file_from_composition_file(labscript_file, composition_file, output_path, is_static = True):
+    """Creates a run file output_path, using the composition file as a template."""
+    script_basename = os.path.splitext(os.path.basename(labscript_file))[0]
+    with h5py.File(composition_file, 'r') as composition:
+        with h5py.File(output_path, 'w') as f:
+            f.attrs['script_basename'] = script_basename
+            f.attrs['run number'] = composition.attrs['run number']
+            f.attrs['n_runs'] = composition.attrs['n_runs']
+            f.attrs['is_composition'] = False
+            f.attrs['sub_shot_templates_folder'] = composition.attrs['sub_shot_templates_folder']
+            f.attrs['sub_shot_runs_folder'] = composition.attrs['sub_shot_runs_folder']
+            f.attrs['sub_shot_scripts_folder'] = composition.attrs['sub_shot_scripts_folder']
+            f.attrs['is_static'] = is_static
+
+            f.create_group('globals')
+            f.copy(composition['globals'], f['globals'])
+
+
 def compile_labscript(labscript_file, run_file):
     """Compiles labscript_file with the run file, returning
     the processes return code, stdout and stderr."""
     proc = subprocess.Popen([sys.executable, labscript_file, run_file], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     stdout, stderr = proc.communicate()
     return proc.returncode, stdout, stderr
+
+
+def get_runmanager_dir():
+    return Path(__file__).absolute().parent
 
 
 def compile_labscript_with_globals_files(labscript_file, globals_files, output_path):
