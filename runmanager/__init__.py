@@ -851,8 +851,7 @@ def make_run_file_from_composition_file(labscript_file, composition_file, output
             f.attrs['sub_shot_scripts_folder'] = composition.attrs['sub_shot_scripts_folder']
             f.attrs['is_static'] = is_static
 
-            f.create_group('globals')
-            f.copy(composition['globals'], f['globals'])
+            f.copy(composition['globals'], f)
 
 
 def compile_labscript(labscript_file, run_file):
